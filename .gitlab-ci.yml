@@ -1,0 +1,156 @@
+image: node:14.17.0-stretch
+
+stages:
+  - variable_date
+  - build
+  - test
+  - deploy
+  - revert
+
+variables:
+  env: prod
+  deploy_subfolder: html
+  REACT_APP_WEBSITE_PREFIX: "[prod] "
+
+
+
+
+print_date:
+  stage: variable_date
+  script: 
+    - date_now=$(date +%C%y-%m-%d-%H-%M-%S)
+    - echo $date_now > /www/date.txt
+  tags:
+    - react
+
+
+
+build_prod:
+  stage: build
+  script:
+    - yarn install
+    - yarn build
+    - mv build build_$env
+  artifacts:
+    paths:
+      - node_modules
+      - build_$env
+  cache:
+    key:
+      files:
+        - yarn.lock
+    paths:
+      - node_modules
+  tags:
+    - react
+
+build_staging:
+  extends: build_prod
+  variables:
+    env: staging
+    REACT_APP_WEBSITE_PREFIX: "[branch=$CI_COMMIT_BRANCH] "
+    PUBLIC_URL: "/$CI_COMMIT_BRANCH"
+
+
+
+run_tests:
+  stage: test
+  script:
+    - CI=true yarn test
+  when: manual
+  tags:
+    - react
+
+linter:
+  stage: test
+  script:
+    - ./node_modules/.bin/eslint ./src/App.js
+  when: manual
+  tags:
+    - react
+
+
+
+deploy_prod:
+  stage: deploy
+  script:
+    - cp -r build_$env /www/test-app/${env}_$(cat /www/date.txt)
+    - cp -Pv /www/${deploy_subfolder} /www/test-app/${env}_$(cat /www/date.txt)/prev-version_1
+    - cp -Pv /www/${deploy_subfolder}_prev_2 /www/test-app/${env}_$(cat /www/date.txt)/prev-version_2
+  tags:
+    - react
+
+deploy_staging:
+  extends: deploy_prod
+  variables:
+    env: staging
+    deploy_subfolder: staging/$CI_COMMIT_BRANCH
+  when: always
+  allow_failure: true
+  only:
+    - master
+    - /green-.*/
+
+
+
+activate_prod:
+  stage: deploy
+  script:
+    - cp -Pv --remove-destination /www/${deploy_subfolder} /www/${deploy_subfolder}_prev_2
+    - ln -fsnv /var/www/test-app/${env}_$(cat /www/date.txt) /www/${deploy_subfolder}
+  when: manual
+  only:
+    - master
+    - /green-.*/
+  tags:
+    - react
+
+activate_staging:
+  extends: activate_prod
+  variables:
+    env: staging
+    deploy_subfolder: staging/$CI_COMMIT_BRANCH
+  when: always
+  only:
+    - master
+    - /green-.*/
+
+
+
+revert_1_prod:
+  stage: revert
+  script:
+    - cp -Pv --remove-destination /www/test-app/${env}_$(cat /www/date.txt)/prev-version_1 /www/$deploy_subfolder
+  when: manual
+  tags:
+    - react
+
+revert_1_staging:
+  extends: revert_1_prod
+  variables:
+    env: staging
+    deploy_subfolder: staging/$CI_COMMIT_BRANCH
+  when: manual
+  only:
+    - master
+    - /green-.*/
+
+
+
+revert_2_prod:
+  stage: revert
+  script:
+    - cp -Pv --remove-destination /www/test-app/${env}_$(cat /www/date.txt)/prev-version_2 /www/$deploy_subfolder
+  when: manual
+  tags:
+    - react
+
+revert_2_staging:
+  extends: revert_2_prod
+  variables:
+    env: staging
+    deploy_subfolder: staging/$CI_COMMIT_BRANCH
+  when: manual
+  only:
+    - master
+    - /green-.*/
